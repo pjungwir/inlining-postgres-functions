@@ -53,6 +53,7 @@ Notes:
     - A user can belong to more than one company.
     - Can everyone see all the sales? No way!
     - You can only see the sales from the companies you belong to.
+        - If you try to see someone else's sales, that's out of line.
     - It is convenient to wrap up this logic into a function: `visible_sales`.
     - You can think of this function as a parameterized view.
       - It returns sales records, but only the ones you can see.
@@ -189,7 +190,7 @@ Notes:
     - It's still fast!
     - We scan all of sales, but we quit after 10 rows.
     - The permission check is just an index-only scan.
-    - Again, these benefits come from inlining.
+    - Again, these benefits are because of function was ... inlined.
 
 
 
@@ -286,7 +287,7 @@ Notes:
 - Now there *is* a way for functions to advertise a plan tree that is equivalent to calling the function.
 - Let's say we have this function, to compute the commission a sales person should receive.
   - We get the sale price from the `sales` table, and the commission rate from the `memberships` table.
-- But a sale might not have a salesperson, and in that case the commission should be zero.
+- But a sale might not have a salesperson, and in that case the commission should be---declined.
   - In that case we don't really have to look up anything.
   - Postgres has a way to let us do that.
 
@@ -333,9 +334,13 @@ Notes:
 
 Notes:
 
-- Here is `pg_proc`, from the catalog.
+- Here is `pg_proc`, from the catalog, line by line.
 - Every function can carry around a helper function, called a "support function".
 - Support functions answer various questions at plan time.
+    - Each kind of question is a "SupportRequest".
+    - If a support function is present, it will get asked all these questions.
+    - If it doesn't know how to answer a certain kind of question, it just returns NULL.
+    - That's the interface, so toe the line.
 
 
 
@@ -352,9 +357,6 @@ Notes:
 
 Notes:
 
-- Each kind of question is a "SupportRequest".
-- If a support function is present, it will get asked all these questions.
-- If it doesn't know how to answer a certain kind of question, it just returns NULL.
 - There are eight support requests. Here they are.
     - The first few help the planner make decisions:
         - How many rows will you return?
@@ -556,6 +558,7 @@ Notes:
 - So I have a patch for this.
     - It got neglected while I was fixing bugs in temporal foreign keys, but I'm starting to pick it up again.
     - I think it just needs some refactoring.
+    - So why not try it out?---if you're so inclined.
 
 
 
@@ -647,10 +650,10 @@ Notes:
         - Runs the plpgsql up 'til the `RETURN QUERY EXECUTE`,
         - Uses the string input to build a query tree but not run it?
         - I think this might be feasible.
-    - To really dream, what if we *did* accept non-`Const` parameters, as long as they just got passed as parameters to the `EXECUTE`, and we plumbed those all the way back to their source when we inlined the query? SQL-language inlining does this already.
+    - To really dream, what if we *did* accept non-`Const` parameters, as long as they just got passed through as parameters to the `EXECUTE`, and we plumbed those all the way back to their source when we inlined the query? SQL-language inlining does this already.
 
 - Anyway, I'm excited to see what people do with this, if it gets into core.
-  - It's the kind of feature that lets people do things we haven't thought of yet.
+  - It's the most exciting kind of feature: that kind that lets people do things we haven't thought of yet.
   - Postgres lore is that we started out in Lisp, and our C is still kind of Lispy.
   - So what if we gave our users macros?
 
@@ -665,6 +668,7 @@ Notes:
 
 - Thanks for coming! Here is the github for this talk.
 - I'm happy for questions, feedback, and flames.
+- Sharing this with you has been . . . sublime.
 
 
 
