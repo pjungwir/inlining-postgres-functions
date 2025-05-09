@@ -14,7 +14,7 @@ Notes:
 # Lineup
 
 - Inlining SQL Set-Returning Functions
-- Inlining Non-SRF SQL Functions
+- Inlining Non-Set-Returning SQL Functions
 - Inlining Non-SQL Set-Returning Functions
 
 Notes:
@@ -67,7 +67,7 @@ Notes:
 
 # Inlining SQL SRFs
 
-```console[|2-3||7|7-10]
+```console[|2-3||7|7-10|12]
 =# EXPLAIN ANALYZE SELECT  *
 FROM    visible_sales_slow(1) AS s
 WHERE   vendor_id = 5000;
@@ -141,14 +141,14 @@ Notes:
     - It's not in the Postgres docs (but I'll submit a patch).
     - There is a wiki page about it.
     - I forget how I found out about that.
-    - It's even missing from several books I know about optimizing Postgres SQL queries.
+    - I checked five books that were either all about Postgres performance, or at least advanced Postgres usage, and none of them mentioned it.
 
 - So now we needn't fear performance when encapsulating logic inside functions.
 - This is great news for SQL developers, and maybe extension developers too.
 - But note this only works for SQL functions: not PL/pgSQL functions, not C functions, Python functions, etc.
     - Postgres has to be able to "see into" your function.
     - It has to be able to convert it into a plan tree.
-    - Postgres can only do this for SQL functions, because sadly, we have not yet solved the Entsheidungsproblem. TODO sp?
+    - Postgres can only do this for SQL functions, because sadly, we have not yet solved the Entscheidungsproblem.
         - Some so-called "computer scientists" claim that we never will.
 
 
@@ -210,11 +210,10 @@ ON a.id = j.id AND a.valid_at && j.valid_at;
 ```
 <!-- .element style="width:100%" -->
 
-from [](https://github.com/pjungwir/temporal_ops)
+from [https://github.com/pjungwir/temporal_ops](https://github.com/pjungwir/temporal_ops)
 
 Notes:
 
-- TODO: print and linkify without repeating myself
 - Here is a query I wish I could generalize then inline.
 - It implements a semijoin between two temporal tables.
 - You may know that the SQL:2011 standard introduces a bunch of new features for "temporal" tables: tables that keep a history of their subject over time.
@@ -340,7 +339,8 @@ Notes:
     - Each kind of question is a "SupportRequest".
     - If a support function is present, it will get asked all these questions.
     - If it doesn't know how to answer a certain kind of question, it just returns NULL.
-    - That's the interface, so toe the line.
+    - Otherwise the result depends on what support request you're answering.
+    - That's the general interface, so if you want to write one, now you know how to toe the line.
 
 
 
@@ -357,7 +357,7 @@ Notes:
 
 Notes:
 
-- There are eight support requests. Here they are.
+- To date there are eight support requests. Here they are.
     - The first few help the planner make decisions:
         - How many rows will you return?
         - What is your selectivity?
@@ -393,7 +393,7 @@ Notes:
 - Now suppose we are computing the monthly commission for each salesperson, to write each one a check.
 - This query gives us a report for any month and any salesperson.
 - But we also want to know the sales with *no* salesperson.
-  - This function can do that too: just set `$1` to null.
+  - This function can do that too: just set parameter 1 to null.
 - In that case the commission should be zero.
 - But maybe there are a lot of those sales.
     - Do we really want to call the function over & over just to get zero every time?
@@ -549,7 +549,7 @@ Notes:
 # There's a Patch for That!
 <!-- .element class="r-fit-text" -->
 
-TODO: commitfest link? Commit message? Diff snippet?
+https://commitfest.postgresql.org/patch/5083/
 
 Notes:
 
@@ -598,7 +598,7 @@ Notes:
 Notes:
 
 - Support functions have to be written in C.
-    - This makes it hard to users to access, since so many people these days are in the Cloud.
+    - This makes it hard for users to access, since so many people these days are in the Cloud.
     - You could have some kind of C shim that dispatches to a user-supplied plpgsql function.
         - This would allay Cloud vendors' exploit fears, but not necessarily all the security fears of the database owner.
 
@@ -659,22 +659,25 @@ Notes:
 
 
 
+# Bibliography
+
+- https://github.com/pjungwir/inlining-postgres-functions
+- https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions
+- https://commitfest.postgresql.org/patch/5083/
+- https://github.com/pjungwir/temporal_ops
+
+Notes:
+
+- Here are some references.
+
+
+
 # Thank you!
 
-TODO: github for this talk
-
+https://github.com/pjungwir/inlining-postgres-functions
 
 Notes:
 
 - Thanks for coming! Here is the github for this talk.
 - I'm happy for questions, feedback, and flames.
 - Sharing this with you has been . . . sublime.
-
-
-
-# Bibliography
-
-TODO: github for this talk
-TODO: wiki page on sql inlining
-TODO: commitfest for this patch
-TODO: temporal_ops github repo
