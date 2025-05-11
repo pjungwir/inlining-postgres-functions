@@ -1,4 +1,5 @@
-# Inlining Postgres Functions Now and Then
+# Inlining Functions<br/>Now and Then
+<!-- .element class="r-fit-text" -->
 
 Paul A. Jungwirth
 
@@ -34,7 +35,7 @@ Notes:
 
 # SRFs
 
-```
+```sql
 CREATE OR REPLACE FUNCTION visible_sales(user_id INT)
 RETURNS SETOF sales
 AS $$
@@ -49,25 +50,25 @@ Notes:
 
 - In case you don't know, a Set-Returning Function is a function that returns more than one result: typically more than one row.
 - Let's say we have a multi-tenant e-commerce application.
-    - There are users and companies and sales.
-    - A user can belong to more than one company.
-    - Can everyone see all the sales? No way!
-    - You can only see the sales from the companies you belong to.
-        - If you try to see someone else's sales, that's out of line.
-    - It is convenient to wrap up this logic into a function: `visible_sales`.
-    - You can think of this function as a parameterized view.
-      - It returns sales records, but only the ones you can see.
-      - Unlike a regular view, it accepts an input: the user id.
-    - This example is based on several real customers I've worked with, btw---
-      except their visibility functions were much more complicated and costly.
-      - You probably have permissions logic too.
-        - Wouldn't it be nice to encapsulate it?
+  - There are users and companies and sales.
+  - A user can belong to more than one company.
+  - Can everyone see all the sales? No way!
+  - You can only see the sales from the companies you belong to.
+      - If you try to see someone else's sales, that's out of line.
+  - It is convenient to wrap up this logic into a function: `visible_sales`.
+  - You can think of this function as a parameterized view.
+    - It returns sales records, but only the ones you can see.
+    - Unlike a regular view, it accepts an input: the user id.
+  - This example is based on several real customers I've worked with, btw---
+    except their visibility functions were much more complicated and costly.
+    - You probably have permissions logic too.
+      - Wouldn't it be nice to encapsulate it?
 
 
 
 # Inlining SQL SRFs
 
-```console[|2-3||7|7-10|12]
+```console[|2-3||8-10|12]
 =# EXPLAIN ANALYZE SELECT  *
 FROM    visible_sales_slow(1) AS s
 WHERE   vendor_id = 5000;
@@ -87,14 +88,12 @@ Notes:
 
 - Ideally our `visible_sales` function would compose well with the other parts of our query.
 - Encapsulation shouldn't cost us performance.
-- Here we're looking up user 1's visible sales, but only for a specific vendor.
-  - This plan is not what we want.
-- Postgres will call our function to find all the visible sales, then filter them.
-- Postgres thinks the function will get 5 rows, but actually user 1 can see thousands of sales. Oops!
-- On the other hand, vendor 5000 only has two sales!
-  - We threw out over 50 thousand rows.
+- Here we're looking up user 1's visible sales, but only for a specific vendor. (here)
+  - This plan (here) is not what we want.
+- Postgres will call our function to find all the visible sales, then filter them. (here)
+- It finds more than 50,000 rows, but it has to throw out all but two.
   - Can't we just go straight to the ones that matter?
-  - Our query time was 58 milliseconds.
+  - Our query time was 58 milliseconds. (here)
 
 
 
@@ -119,37 +118,47 @@ Notes:
 Notes:
 
 - This would be a lot better. Less than a tenth of a millisecond, compared to 50+.
-    - Instead of calling the function and going over all the sales,
-      Postgres merges it into the rest of the query.
-      - Basically the planner removed the `FuncCall` node and replaced it with a `Query` node based on the function definition.
-      - So first of all there is no function call overhead.
-      - But that's just the beginning.
-        - The planner thinks we just have a subquery here, and it can apply all its tricks.
-        - Its estimates are much more accurate: none of this "I guess a function returns about 5 rows, right?"
-        - And best of all, it can rearrange things.
-        - Look at this: our company filter is pushed down into the query on memberships!
-        - And btw that is an index-only scan, because we only need the company id.
-        - For each of those we'll find the sales with an index.
-            - Postgres estimates 7 and gets 2, pretty close.
+  - Instead of calling the function and going over all the sales,
+    Postgres merges it into the rest of the query.
+    - Basically the planner removed the `FuncCall` node and replaced it with a `Query` node based on the function definition.
+    - You can see our plan has no more Function Scan.
+    - So first of all there is no function call overhead.
+    - But that's just the beginning.
+      - The planner thinks we just have a subquery here, and it can apply all its tricks.
+      - After unwrapping the function, it can rearrange everything into the larger query plan.
+	  - Without that opaque layer, it can make much better estimates.
+      - Best of it, it can push down conditions.
+      - Our company filter is pushed down into the query on memberships!
+      - And btw that is an index-only scan, because we only need the company id.
+      - For each of those we'll find the sales with an index.
+        - Postgres estimates 7 and gets 2, pretty close.
 
 - As long as we can declare our function as `STABLE`, this is what we get.
-    - `STABLE` means that our result might depend on what the tables contain, but otherwise it will give the same result for the same inputs:
-        - There is no randomness or time-dependence.
-        - We don't modify anything.
+  - `STABLE` means that our result might depend on what the tables contain, but otherwise it will give the same result for the same inputs:
+    - There is no randomness or time-dependence.
+    - We don't modify anything.
+
+
+
+# Inlining SQL SRFs
+
+![inlining SQL wiki page](img/sql-inlining-wiki.png)
+
+Notes:
 
 - Btw this is not very well-known, I think.
-    - It's not in the Postgres docs (but I'll submit a patch).
-    - There is a wiki page about it.
-    - I forget how I found out about that.
-    - I checked five books that were either all about Postgres performance, or at least advanced Postgres usage, and none of them mentioned it.
+  - It's not in the Postgres docs (but I'll submit a patch).
+  - There is a wiki page about it.
+  - I forget how I found out about that.
+  - I checked five books that were either all about Postgres performance, or at least advanced Postgres usage, and none of them mentioned it.
 
 - So now we needn't fear performance when encapsulating logic inside functions.
 - This is great news for SQL developers, and maybe extension developers too.
 - But note this only works for SQL functions: not PL/pgSQL functions, not C functions, Python functions, etc.
-    - Postgres has to be able to "see into" your function.
-    - It has to be able to convert it into a plan tree.
-    - Postgres can only do this for SQL functions, because sadly, we have not yet solved the Entscheidungsproblem.
-        - Some so-called "computer scientists" claim that we never will.
+  - Postgres has to be able to "see into" your function.
+  - It has to be able to convert it into a plan tree.
+  - Postgres can only do this for SQL functions, because sadly, we have not yet solved the Entscheidungsproblem.
+    - Some so-called "computer scientists" claim that we never will.
 
 
 
@@ -185,12 +194,54 @@ WHERE   vendor_id = 2 LIMIT 10;
 Notes:
 
 - Here's another example, with two changes:
-    - We're looking at a company that *does* have a lot of sales.
-    - But we're paginating the results, showing only 10 per page.
-    - It's still fast!
-    - We scan all of sales, but we quit after 10 rows.
-    - The permission check is just an index-only scan.
-    - Again, these benefits are because of function was ... inlined.
+  - We're looking at a company that *does* have a lot of sales.
+  - But we're paginating the results, showing only 10 per page. (here)
+  - It's still fast! (here)
+  - We scan all of sales, but we quit after 10 rows.  (here)
+  - The permission check is just an index-only scan. (here)
+  - Again, these benefits are because of function was inlined.
+
+
+
+# `inline_set_returning_function`
+<!-- .element class="r-fit-text" -->
+
+```c[|2-4|6-8|10-14|16-19|21]
+Query *inline_set_returning_function(...) {
+  /* Fetch the function body */
+  Datum tmp = SysCacheGetAttrNotNull(PROCOID, func_tuple, Anum_pg_proc_prosrc);
+  char *src = TextDatumGetCString(tmp);
+
+  /* Set up to handle parameters */
+  SQLFunctionParseInfoPtr pinfo = prepare_sql_fn_parse_info(
+    func_tuple, (Node *) fexpr, fexpr->inputcollid);
+
+  /* Parse, analyze, and rewrite */
+  List *raw_parsetree_list = pg_parse_query(src);
+  List *querytree_list = pg_analyze_and_rewrite_withcb(
+    linitial(raw_parsetree_list), src, ..., pinfo, NULL);
+  Query *querytree = linitial(querytree_list);
+
+  querytree = substitute_actual_srf_parameters(
+    querytree,
+    funcform->pronargs,
+    fexpr->args);
+
+  return querytree;
+}
+```
+
+Notes:
+
+- Here is how that works.
+- The planner has this `inline_set_returning_function` function.
+- Obviously the real thing is about ten times as many lines,
+  but I'm calling out the essentials.
+- First we look up the function definition (here).
+- We build this `pinfo` struct, which will let us wire the function's parameters into the plan tree. (here)
+- Then we parse that into a Query node. (here)
+- Then we take the function's original parameters and inject them into the Query tree. (here)
+- That's what we return. (here)
 
 
 
@@ -217,8 +268,10 @@ Notes:
 - Here is a query I wish I could generalize then inline.
 - It implements a semijoin between two temporal tables.
 - You may know that the SQL:2011 standard introduces a bunch of new features for "temporal" tables: tables that keep a history of their subject over time.
-    - But the standard doesn't give you anything for temporal outer join, semi-join, anti-join, aggregates, union, intersect, or except.
-    - I've got a github repo with SQL-based implementations for those, but ideally you'd wrap them up in functions, like this one.....
+  - But the standard doesn't give you anything for temporal outer join, semi-join, anti-join, aggregates, union, intersect, or except.
+  - I've got a github repo with SQL-based implementations for those.
+  - It shows you the pattern you'd use, with tests to validate them.
+  - But what I really want is to wrap them up in functions, like this one.....
 
 
 
@@ -264,15 +317,16 @@ Notes:
 
 
 
-# Inlining Non-SRFs
+# Inlining Non-SQL
 
-```sql
+```sql[|6,8,12|7,9-11]
 CREATE OR REPLACE FUNCTION commission_cents(
   _sale_id INTEGER, _salesperson_id INTEGER
 )
 RETURNS INTEGER
 AS $$
-  SELECT  total_price_cents * COALESCE(commission_percent, 0)
+  SELECT  s.total_price_cents *
+            COALESCE(m.commission_percent, 0)
   FROM    sales AS s
   LEFT JOIN memberships AS m
   ON      m.company_id = s.vendor_id
@@ -284,8 +338,9 @@ $$ LANGUAGE sql STABLE;
 Notes:
 
 - Now there *is* a way for functions to advertise a plan tree that is equivalent to calling the function.
-- Let's say we have this function, to compute the commission a sales person should receive.
-  - We get the sale price from the `sales` table, and the commission rate from the `memberships` table.
+- Here is an easy example.
+- The function looks at sales made and computes the commission a salesperson should receive.
+  - We get the sale price from the `sales` table (here), and the commission rate from the `memberships` table. (here)
 - But a sale might not have a salesperson, and in that case the commission should be---declined.
   - In that case we don't really have to look up anything.
   - Postgres has a way to let us do that.
@@ -334,7 +389,8 @@ Notes:
 Notes:
 
 - Here is `pg_proc`, from the catalog, line by line.
-- Every function can carry around a helper function, called a "support function".
+- Every function can carry around a helper function, called a "support function". (here)
+  - It's in the `prosupport` field.
 - Support functions answer various questions at plan time.
     - Each kind of question is a "SupportRequest".
     - If a support function is present, it will get asked all these questions.
@@ -360,6 +416,12 @@ Notes:
 - To date there are eight support requests. Here they are.
     - The first few help the planner make decisions:
         - How many rows will you return?
+            - By default the planner assumes a SRF returns 1000 rows.
+                - You can override that with a static value when you define the function, but a support function lets it choose case-by-case, when you plan each query.
+                    - I had a patch accepted to v17 about this, for Postgres's `unnest` function.
+                        - It already had a support function, and if you gave it a constant array, it would use the array's length to predict the number of rows.
+                        - My patch let it use column statistics as well, if you passed it a column.
+                        - So that's just an example of what you can do.
         - What is your selectivity?
         - What is your cost?
     - Then there are some fancy ones:
@@ -372,25 +434,25 @@ Notes:
     - Then the fanciest of all is `SupportRequestSimplify`.
         - This lets a function replace itself with a plan tree.
         - In the docs this is used for mathematical identities, like "anything plus zero" should just be anything.
-            - That's our commission example.
 
 
 
 
-# Inlining Non-SRFs
+# Inlining Non-SQL
 
 ```sql
 SELECT  total_price_cents,
-        commission_cents(id, salesperson_id)
+        commission_cents(id, $1)
 FROM    sales
-WHERE   salesperson_id = $1
+WHERE   salesperson_id IS NOT DISTINCT FROM $1
 AND     sold_at BETWEEN start_of_month($2)
                     AND end_of_month($2)
 ```
 
 Notes:
 
-- Now suppose we are computing the monthly commission for each salesperson, to write each one a check.
+- Here is an example kind of like that.
+- Suppose we are computing the monthly commission for each salesperson, to write each one a check.
 - This query gives us a report for any month and any salesperson.
 - But we also want to know the sales with *no* salesperson.
   - This function can do that too: just set parameter 1 to null.
@@ -442,6 +504,7 @@ Notes:
 
 - Here is the declaration for that function.
 - Of course all the details are in C.
+- It takes `INTERNAL` and returns `INTERNAL`.
 
 
 
@@ -467,9 +530,10 @@ Notes:
 
 - Here is roughly the C code for this.
 - You can find the complete code in the github repo for these slides.
-- The first argument is always the support request struct, which is a Node.
-	- It could be any of the support request types, so we have to make sure it's one we handle.
-	- It gives us the parse tree for this function call, so we grab that.
+- The first argument is always the support request struct, which is a Node. (here)
+  - Each support request has its own node type.
+  - We have to make sure the one is get is a support request we can handle. (here)
+  - It gives us the parse tree for this function call, so we grab that. (here)
 
 
 
@@ -498,7 +562,7 @@ Notes:
 # `commission_cents_support`
 <!-- .element class="r-fit-text" -->
 
-```c[|1|2-15|17]
+```c[|1|1-4|1-15|17]
 Node *node = lsecond(expr->args);
 if (IsA(node, Const)) {
   Const *c = (Const *) node;
@@ -522,27 +586,27 @@ Notes:
 
 - Okay back to our support function....
 - I'm skipping lots of error checking.
-- We get the function's second argument, the sales person id.
-- If it's a Const node and it's NULL,
-  - then our result will always be a 0.
-- We can replace the whole function call with that.
-- Otherwise we return NULL, saying we can't make any simplifications.
+- We get the function's second argument, the salesperson id. (here)
+- If it's a Const node and it's NULL, (here)
+  - then our result will always be a 0. (here)
+- We return a zero `Const` node.
+- Postgres can replace the whole function call with that.
+- Otherwise we return NULL, saying we can't make any simplifications. (here)
 
-- Note that I'm not supporting Param nodes.
-    - That's a $1, $2, etc., such as you'd use to call this from an application.
-    - This is a shame, because those may be constant too.
-	- I tried to make that work, but I couldn't get access to their bound values from the support function.
-    - It seems like this should be available from a few accessible structs, but when I tried the `ParamListInfo` was always null:
-        - in the `PlannerGlobal` you can get off the `root` `PlannerInfo` passed to your support function,
-        - and even the `context` passed to `simplify_function`!
-        - Maybe those just haven't been set up yet?
-        - In principle we should have access to them, because they are passed when the client sends the query (unless we're in a prepared statement).
+- Can we handle non-Const inputs?
+  - Well if our function is called as part of a parameterized query, like from psycopg,
+    then by the time we get here those are already `Const` nodes. So that's covered.
+  - But if it was called from another wrapping function and passed parameters from that function,
+    we would get `Param` nodes as our funcargs.
+    - Those aren't bound yet, so we have no knowledge of what they'll be.
+  - But if you can simplify other parts of the result, you can do that, and wire up the params,
+    just as the SQL-language inlining was doing. (I haven't experimented with this yet.)
+  - The point is, you don't have to return just a `Const`.
 
-- Now, your support function doesn't *have* to return a `Const`.
-- That's what this feature was designed for, I guess, but you could build any node tree and return that.
-    - So does this let us inline `temporal_semijoin`? What if we just return whole a `Query` node?
-    - Sadly no, because the planner doesn't use this to simplify set-returning functions.
-    - The work to inline SQL-language functions happens in a completely different place.
+  - So, could you return a `Query`?
+    - Does this let us inline `temporal_semijoin`?
+    - Sadly no.
+      - The planner simplifies SRFs in a totally different place.
 
 
 
@@ -558,7 +622,8 @@ Notes:
 - So I have a patch for this.
     - It got neglected while I was fixing bugs in temporal foreign keys, but I'm starting to pick it up again.
     - I think it just needs some refactoring.
-    - So why not try it out?---if you're so inclined.
+    - Having more people check it out and give it a try would be great.
+    - So why not test it yourself?---if you're so inclined.
 
 
 
@@ -583,13 +648,15 @@ Notes:
 - Here you go.
     - This is what you would write as the support function author.
 - Once again error checking is wildly absent.
-- I'm not even checking for `Const` inputs.
-- Somehow you build your SQL string.
+    - I'm not even checking for `Const` inputs.
+    - If you want to see the real thing, you can look at that `temporal_ops` github repo.
+    - Of course the function there only works if my patch is applied.
+- Somehow you build your SQL string. (here)
 - Then Postgres gives us everything we need.
-    - You parse it.
-    - You do analysis and rewriting.
-    - That's your result.
-- This is more or less what the SQL-inlining code is doing.
+    - You parse it. (here)
+    - You do analysis and rewriting. (here)
+    - That's your result. (here)
+- This is just what we saw from SQL-only inlining.
 
 
 
@@ -651,6 +718,16 @@ Notes:
         - Uses the string input to build a query tree but not run it?
         - I think this might be feasible.
     - To really dream, what if we *did* accept non-`Const` parameters, as long as they just got passed through as parameters to the `EXECUTE`, and we plumbed those all the way back to their source when we inlined the query? SQL-language inlining does this already.
+
+  - Or here is something maybe more realistic.
+    - If my patch gets in I think you could do this with an extension---maybe eventually put it core.
+    - The extension defines a general-purpose support function that you can attach to your functions.
+      - It dispatches to your own user-defined function, written in plpgsql or whatever, passing a json version of the `FuncCall` node.
+      - Your plpgsql function returns a string with the SQL it should use.
+      - Then the extension function parses the SQL, just like the existing core-Postgres SQL-function inlining code.
+      - So we've got a Query node, and that gets inlined.
+      - We could even support parameters: they get turned into Param nodes.
+        - Again this is just like what we have already for SQL-only functions.
 
 - Anyway, I'm excited to see what people do with this, if it gets into core.
   - It's the most exciting kind of feature: that kind that lets people do things we haven't thought of yet.

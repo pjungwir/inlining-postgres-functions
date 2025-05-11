@@ -80,6 +80,8 @@ commission_cents_support(PG_FUNCTION_ARGS)
 			ereport(NOTICE, (errmsg("commission_cents_support inlining a constant zero")));
 			PG_RETURN_POINTER(ret);
 		}
+	} else if (IsA(node, Param)) {
+		ereport(NOTICE, (errmsg("got a param")));
 	}
 
 	ereport(NOTICE, (errmsg("commission_cents_support called with non-constant parameter")));

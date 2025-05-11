@@ -105,7 +105,7 @@ RETURNS INTEGER
 AS $$
 SELECT  commission_cents(id, $1)
 FROM    sales
-WHERE   salesperson_id = $1
+WHERE   salesperson_id IS NOT DISTINCT FROM $1
 AND     sold_at BETWEEN start_of_month($2) AND end_of_month($2);
 $$ LANGUAGE sql STABLE;
 
@@ -182,10 +182,23 @@ ON true
 
 -- Weak power law, with shuffled x (TODO: the shuffling)
 INSERT INTO line_items (sale_id, sku, price_cents)
-SELECT  id, 'TODO', 0
+SELECT  id, 'TODO', 10000
 FROM    sales
 JOIN LATERAL generate_series(1, 1 + (:max_line_items_per_sale - 1) / id) AS s(i)
 ON true
+;
+
+-- Give credit to salespeople for some sales, but not all:
+UPDATE  sales AS s
+SET     salesperson_id = (
+  SELECT  m.user_id
+  FROM    memberships m
+  WHERE   m.company_id = s.vendor_id
+  AND     m.user_id % 3 = s.id % 3
+  AND     s.id % 10 <> 0
+  ORDER BY m.user_id
+  LIMIT 1
+)
 ;
 
 -- Compute the total price:
